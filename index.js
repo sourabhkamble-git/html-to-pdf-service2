@@ -36,13 +36,16 @@ app.post("/convert", async (req, res) => {
 
     if (format === "json") {
       // Remove any invalid characters: whitespace, commas, line breaks
-      let base64Pdf = pdfBuffer.toString("base64");
-      base64Pdf = base64Pdf.replace(/[^A-Za-z0-9+/=]/g, ""); // Keep only valid Base64 chars
+      // In index.js, line 40-44
+let base64Pdf = pdfBuffer.toString("base64");
+base64Pdf = base64Pdf.replace(/[^A-Za-z0-9+/=]/g, ""); // Keep only valid Base64 chars
+// Ensure no whitespace at all
+base64Pdf = base64Pdf.trim();
 
-      return res.json({
-        success: true,
-        pdf: base64Pdf
-      });
+return res.json({
+  success: true,
+  pdf: base64Pdf
+});
     } else {
       res.set({ "Content-Type": "application/pdf", "Content-Length": pdfBuffer.length });
       return res.send(pdfBuffer);
