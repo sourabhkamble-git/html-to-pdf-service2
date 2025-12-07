@@ -40,8 +40,23 @@ app.post("/convert", async (req, res) => {
       console.log("PDF buffer type:", typeof pdfBuffer);
       console.log("PDF buffer is Buffer:", Buffer.isBuffer(pdfBuffer));
       
-      // Convert PDF buffer to base64
-      let base64Pdf = pdfBuffer.toString("base64");
+      // CRITICAL FIX: Puppeteer returns a Uint8Array, not a Node.js Buffer
+      // Convert to proper Node.js Buffer first, then to base64
+      let nodeBuffer;
+      if (Buffer.isBuffer(pdfBuffer)) {
+        nodeBuffer = pdfBuffer;
+      } else if (pdfBuffer instanceof Uint8Array) {
+        nodeBuffer = Buffer.from(pdfBuffer);
+      } else {
+        // Fallback: try to convert whatever it is
+        nodeBuffer = Buffer.from(pdfBuffer);
+      }
+      
+      console.log("Node buffer size:", nodeBuffer.length);
+      console.log("Node buffer is Buffer:", Buffer.isBuffer(nodeBuffer));
+      
+      // Now convert to base64 properly
+      let base64Pdf = nodeBuffer.toString("base64");
       
       // Debug: Check base64 BEFORE any cleaning
       console.log("Base64 BEFORE cleaning - length:", base64Pdf.length);
