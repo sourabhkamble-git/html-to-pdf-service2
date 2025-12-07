@@ -8,6 +8,10 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
 
+app.get("/", (req, res) => {
+    res.send("HTML to PDF service is running. Use POST /convert with HTML content.");
+  });
+
 app.post("/convert", async (req, res) => {
   try {
     const { html } = req.body;
