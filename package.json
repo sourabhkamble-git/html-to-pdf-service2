@@ -4,7 +4,8 @@
     "type": "module",
     "main": "index.js",
     "scripts": {
-      "start": "node index.js"
+      "start": "node index.js",
+      "render-build": "./render-build.sh"
     },
     "dependencies": {
       "express": "^4.18.2",

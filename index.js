@@ -25,17 +25,14 @@ app.post("/convert", async (req, res) => {
 
         const browser = await puppeteer.launch({
             headless: true,
-            executablePath: puppeteer.executablePath(),
             args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-first-run",
-                "--no-zygote",
-                "--single-process"
-            ]
-        });
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-dev-shm-usage",
+              "--disable-gpu"
+            ],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
+          });
 
         const page = await browser.newPage();
         await page.setContent(html, { waitUntil: "networkidle0" });
