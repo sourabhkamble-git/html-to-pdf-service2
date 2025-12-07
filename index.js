@@ -35,17 +35,60 @@ app.post("/convert", async (req, res) => {
     await browser.close();
 
     if (format === "json") {
+      // Validate PDF buffer first
+      console.log("PDF buffer size:", pdfBuffer.length);
+      console.log("PDF buffer type:", typeof pdfBuffer);
+      console.log("PDF buffer is Buffer:", Buffer.isBuffer(pdfBuffer));
+      
+      // Convert PDF buffer to base64
+      let base64Pdf = pdfBuffer.toString("base64");
+      
+      // Debug: Check base64 BEFORE any cleaning
+      console.log("Base64 BEFORE cleaning - length:", base64Pdf.length);
+      console.log("Base64 BEFORE cleaning - first 100 chars:", base64Pdf.substring(0, 100));
+      console.log("Base64 BEFORE cleaning - contains letters:", /[A-Za-z]/.test(base64Pdf));
+      console.log("Base64 BEFORE cleaning - contains +:", base64Pdf.includes('+'));
+      console.log("Base64 BEFORE cleaning - contains /:", base64Pdf.includes('/'));
+      console.log("Base64 BEFORE cleaning - contains =:", base64Pdf.includes('='));
+      
       // Remove any invalid characters: whitespace, commas, line breaks
-      // In index.js, line 40-44
-let base64Pdf = pdfBuffer.toString("base64");
-base64Pdf = base64Pdf.replace(/[^A-Za-z0-9+/=]/g, ""); // Keep only valid Base64 chars
-// Ensure no whitespace at all
-base64Pdf = base64Pdf.trim();
-
-return res.json({
-  success: true,
-  pdf: base64Pdf
-});
+      // BUT be careful - only remove actual invalid chars, not valid base64 chars
+      base64Pdf = base64Pdf.replace(/[\s\n\r\t]/g, ""); // Only remove whitespace
+      
+      // Debug: Check base64 AFTER cleaning
+      console.log("Base64 AFTER cleaning - length:", base64Pdf.length);
+      console.log("Base64 AFTER cleaning - first 100 chars:", base64Pdf.substring(0, 100));
+      console.log("Base64 AFTER cleaning - contains letters:", /[A-Za-z]/.test(base64Pdf));
+      
+      // CRITICAL VALIDATION: Base64 MUST contain letters (A-Z or a-z)
+      // If it doesn't, the PDF buffer or base64 conversion is corrupted
+      if (!/[A-Za-z]/.test(base64Pdf)) {
+        console.error("ERROR: Base64 string contains NO letters! This is invalid.");
+        console.error("First 200 chars:", base64Pdf.substring(0, 200));
+        console.error("All chars are digits:", /^\d+$/.test(base64Pdf));
+        return res.status(500).json({ 
+          success: false, 
+          error: "Generated base64 is invalid - contains no letters. PDF buffer may be corrupted." 
+        });
+      }
+      
+      // Ensure base64 is sent as a proper string in JSON
+      const response = {
+        success: true,
+        pdf: String(base64Pdf) // Explicitly convert to string
+      };
+      
+      // Debug: Verify response object
+      console.log("Response pdf field type:", typeof response.pdf);
+      console.log("Response pdf field length:", response.pdf.length);
+      console.log("Response pdf field (first 100 chars):", response.pdf.substring(0, 100));
+      
+      // Set content type and send with explicit JSON stringification
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      const jsonString = JSON.stringify(response);
+      console.log("Final JSON (first 200 chars):", jsonString.substring(0, 200));
+      
+      return res.send(jsonString);
     } else {
       res.set({ "Content-Type": "application/pdf", "Content-Length": pdfBuffer.length });
       return res.send(pdfBuffer);
