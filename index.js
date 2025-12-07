@@ -6,13 +6,13 @@ import puppeteer from "puppeteer-core";
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json({ limit: "20mb" }));
+app.use(bodyParser.json({ limit: "50mb" })); // Increased limit
 
 // Use ?format=json to get base64 for Salesforce, else download PDF directly
 app.post("/convert", async (req, res) => {
   try {
     const { html } = req.body;
-    const format = req.query.format || "pdf"; // 'pdf' or 'json'
+    const format = req.query.format?.toLowerCase() === "json" ? "json" : "pdf";
 
     if (!html) {
       return res.status(400).json({
@@ -32,17 +32,17 @@ app.post("/convert", async (req, res) => {
     await page.setContent(html, { waitUntil: ["load", "domcontentloaded"] });
 
     const pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
-
     await browser.close();
 
     if (format === "json") {
-      // Base64 JSON for Salesforce
+      // Sanitize Base64 (remove newlines) before sending to Salesforce
+      const base64Pdf = pdfBuffer.toString("base64").replace(/\r?\n|\r/g, "");
       return res.json({
         success: true,
-        pdf: pdfBuffer.toString("base64")
+        pdf: base64Pdf
       });
     } else {
-      // Raw PDF for Postman/browser
+      // Raw PDF download
       res.set({
         "Content-Type": "application/pdf",
         "Content-Length": pdfBuffer.length
