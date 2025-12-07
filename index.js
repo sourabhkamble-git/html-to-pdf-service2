@@ -1,68 +1,67 @@
 import express from "express";
 import cors from "cors";
-import puppeteer from "puppeteer";
+import bodyParser from "body-parser";
+import chromium from "@sparticuz/chromium";
+import puppeteer from "puppeteer-core";
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "10mb" }));
+app.use(bodyParser.json({ limit: "20mb" }));
 
-// API key security
-app.use((req, res, next) => {
-    const apiKey = process.env.API_KEY;
-    if (apiKey && req.headers["x-api-key"] !== apiKey) {
-        return res.status(403).json({ error: "Unauthorized" });
+app.post("/generate-pdf", async (req, res) => {
+  try {
+    const { html } = req.body;
+
+    if (!html) {
+      return res.status(400).json({
+        success: false,
+        error: "HTML content is required"
+      });
     }
-    next();
-});
 
-app.post("/convert", async (req, res) => {
-    try {
-        const { html } = req.body;
+    // Launch browser using chromium + puppeteer-core
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: true
+    });
 
-        if (!html) {
-            return res.status(400).json({ error: "HTML content required." });
-        }
+    const page = await browser.newPage();
 
-        const browser = await puppeteer.launch({
-            headless: true,
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-            args: [
-              "--no-sandbox",
-              "--disable-setuid-sandbox",
-              "--disable-dev-shm-usage",
-              "--single-process",
-              "--disable-gpu"
-            ]
-          });
+    await page.setContent(html, {
+      waitUntil: ["load", "domcontentloaded"]
+    });
 
-        const page = await browser.newPage();
-        await page.setContent(html, { waitUntil: "networkidle0" });
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true
+    });
 
-        const pdfBuffer = await page.pdf({
-            format: "A4",
-            printBackground: true,
-        });
+    await browser.close();
 
-        await browser.close();
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Length": pdfBuffer.length
+    });
 
-        return res.json({
-            success: true,
-            pdf: pdfBuffer.toString("base64"),
-        });
+    res.send(pdfBuffer);
 
-    } catch (err) {
-        console.error("PDF ERROR:", err);
-        return res.status(500).json({
-            success: false,
-            error: "Failed to generate PDF",
-            details: err.message,
-        });
-    }
+  } catch (error) {
+    console.error("PDF error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "Failed to generate PDF",
+      details: error.message
+    });
+  }
 });
 
 app.get("/", (req, res) => {
-    res.send("HTML to PDF Service Running ✔");
+  res.send("HTML to PDF Service is running");
 });
 
-const PORT = process.env.PORT || 3000;
+// Render uses PORT automatically
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on ${PORT}`));

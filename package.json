@@ -1,16 +1,16 @@
 {
     "name": "html-to-pdf-service",
     "version": "1.0.0",
-    "type": "module",
     "main": "index.js",
+    "type": "module",
     "scripts": {
-      "start": "node index.js",
-      "render-build": "./render-build.sh"
+        "start": "node index.js"
     },
     "dependencies": {
-      "express": "^4.18.2",
-      "puppeteer": "^22.0.0",
-      "cors": "^2.8.5"
+        "@sparticuz/chromium": "^143.0.0",
+        "body-parser": "^2.2.1",
+        "cors": "^2.8.5",
+        "express": "^4.22.1",
+        "puppeteer-core": "^24.32.0"
     }
-  }
-  
+}
