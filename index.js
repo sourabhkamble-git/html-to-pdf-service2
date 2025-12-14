@@ -340,98 +340,100 @@ app.post("/convert-word-to-html", async (req, res) => {
       }
       
       // docx-preview didn't preserve merge fields
-      // SIMPLIFIED APPROACH: Always use mammoth HTML (guarantees merge fields) and apply docx-preview styles
-      console.log('docx-preview HTML missing merge fields. Using mammoth HTML with docx-preview styles applied...');
-      console.log(`Mammoth HTML has ${mammothMergeFields.length} merge fields - these will be preserved`);
+      // BETTER APPROACH: Use docx-preview HTML as BASE (perfect styling) and inject merge fields from mammoth
+      console.log('docx-preview HTML missing merge fields. Using docx-preview HTML as base and injecting merge fields from mammoth...');
+      console.log(`Mammoth HTML has ${mammothMergeFields.length} merge fields - these will be injected into styled HTML`);
       
-      // Use mammoth HTML as base (GUARANTEES merge fields) and apply styles from docx-preview
+      // CRITICAL: Use docx-preview HTML structure (perfect styling) as the base
+      // Extract text content from mammoth HTML (has merge fields) and inject into docx-preview structure
       const article = styledWrapper.querySelector('article') || styledWrapper.querySelector('section') || styledWrapper;
       
-      // Create container for mammoth HTML
+      // Create container for mammoth HTML to extract text
       const mammothContainer = document.createElement('div');
       mammothContainer.innerHTML = mammothHtmlContent;
       
-      // Get styled elements from docx-preview
-      const styledElements = Array.from(article.querySelectorAll('*'));
-      const mammothElements = Array.from(mammothContainer.querySelectorAll('*'));
-      
-      console.log(`Applying styles from ${styledElements.length} styled elements to ${mammothElements.length} mammoth elements`);
-      
-      // Create style map: tag -> array of styles (by position)
-      const styleMap = new Map();
-      styledElements.forEach((el) => {
-        const tag = el.tagName;
-        if (!styleMap.has(tag)) {
-          styleMap.set(tag, []);
+      // Extract all text nodes from mammoth HTML (these contain merge fields)
+      const mammothTextNodes = [];
+      const mammothWalker = document.createTreeWalker(
+        mammothContainer,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+      );
+      let mammothNode;
+      while (mammothNode = mammothWalker.nextNode()) {
+        const text = mammothNode.textContent;
+        if (text && text.trim()) {
+          mammothTextNodes.push(text);
         }
-        styleMap.get(tag).push({
-          style: el.style.cssText,
-          className: el.className,
-          attributes: Array.from(el.attributes).filter(attr => 
-            ['style', 'class', 'align', 'valign', 'width', 'height', 'colspan', 'rowspan', 'bgcolor'].includes(attr.name)
-          ).reduce((acc, attr) => {
-            acc[attr.name] = attr.value;
-            return acc;
-          }, {})
-        });
-      });
-      
-      // Apply styles to mammoth elements by matching tag and position
-      const tagIndices = new Map();
-      mammothElements.forEach((mammothEl) => {
-        const tag = mammothEl.tagName;
-        if (!tagIndices.has(tag)) {
-          tagIndices.set(tag, 0);
-        }
-        const index = tagIndices.get(tag);
-        tagIndices.set(tag, index + 1);
-        
-        // Get style for this tag at this position
-        if (styleMap.has(tag) && styleMap.get(tag).length > index) {
-          const styleData = styleMap.get(tag)[index];
-          
-          // Apply inline style
-          if (styleData.style) {
-            mammothEl.style.cssText = styleData.style;
-          }
-          
-          // Apply class
-          if (styleData.className) {
-            mammothEl.className = styleData.className;
-          }
-          
-          // Apply attributes
-          Object.entries(styleData.attributes).forEach(([name, value]) => {
-            mammothEl.setAttribute(name, value);
-          });
-        } else if (styleMap.has(tag) && styleMap.get(tag).length > 0) {
-          // Use first style of this tag type as fallback
-          const styleData = styleMap.get(tag)[0];
-          if (styleData.style) {
-            mammothEl.style.cssText = styleData.style;
-          }
-          if (styleData.className) {
-            mammothEl.className = styleData.className;
-          }
-        }
-      });
-      
-      // Replace article/wrapper content with styled mammoth HTML
-      if (article !== styledWrapper) {
-        const newArticle = document.createElement(article.tagName || 'article');
-        if (article.className) newArticle.className = article.className;
-        if (article.style.cssText) newArticle.style.cssText = article.style.cssText;
-        newArticle.innerHTML = mammothContainer.innerHTML;
-        article.innerHTML = newArticle.innerHTML;
-      } else {
-        // Preserve wrapper styles
-        const wrapperClone = styledWrapper.cloneNode(false);
-        wrapperClone.innerHTML = mammothContainer.innerHTML;
-        styledWrapper.innerHTML = wrapperClone.innerHTML;
       }
       
-      // Get merged HTML - should have merge fields from mammoth
+      console.log(`Extracted ${mammothTextNodes.length} text nodes from mammoth HTML (with merge fields)`);
+      
+      // Extract all text nodes from docx-preview HTML (perfect styling, but no merge fields)
+      const styledTextNodes = [];
+      const styledTextNodesMap = new Map(); // Map to store node -> parent element for style preservation
+      const styledWalker = document.createTreeWalker(
+        article,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+      );
+      let styledNode;
+      while (styledNode = styledWalker.nextNode()) {
+        const text = styledNode.textContent;
+        if (text && text.trim()) {
+          styledTextNodes.push({
+            node: styledNode,
+            parent: styledNode.parentElement,
+            originalText: text
+          });
+        }
+      }
+      
+      console.log(`Found ${styledTextNodes.length} text nodes in docx-preview HTML (with perfect styling)`);
+      
+      // Replace text content in docx-preview HTML with text from mammoth HTML
+      // This preserves ALL inline styles, colors, fonts from docx-preview
+      let mammothIndex = 0;
+      styledTextNodes.forEach(({ node, parent }) => {
+        if (mammothIndex < mammothTextNodes.length && parent) {
+          // Replace text content - parent element's inline styles are preserved automatically
+          node.textContent = mammothTextNodes[mammothIndex];
+          mammothIndex++;
+        }
+      });
+      
+      // If there are remaining mammoth text nodes, append them with similar styling
+      if (mammothIndex < mammothTextNodes.length) {
+        console.log(`Appending ${mammothTextNodes.length - mammothIndex} additional text nodes from mammoth...`);
+        
+        // Get styles from last paragraph to maintain consistency
+        const lastP = Array.from(article.querySelectorAll('p')).pop();
+        const baseStyle = lastP ? lastP.style.cssText : '';
+        const baseClass = lastP ? lastP.className : '';
+        
+        for (let i = mammothIndex; i < mammothTextNodes.length; i++) {
+          const p = document.createElement('p');
+          if (baseStyle) p.style.cssText = baseStyle;
+          if (baseClass) p.className = baseClass;
+          p.textContent = mammothTextNodes[i];
+          article.appendChild(p);
+        }
+      }
+      
+      // The article now has docx-preview's perfect styling with mammoth's merge fields
+      // No need to replace content - we've already updated the text nodes
+      
+      // Get merged HTML - should have merge fields from mammoth AND perfect styling from docx-preview
+      // The styledWrapper contains the complete docx-preview HTML structure with all inline styles
+      // We've replaced text nodes, so merge fields are injected while preserving all styling
       let mergedHtml = styledWrapper.innerHTML;
+      
+      // CRITICAL: Verify that inline styles are still present in the HTML
+      // Count elements with inline styles to ensure they're preserved
+      const elementsWithStyles = styledWrapper.querySelectorAll('[style]');
+      console.log(`✓ Preserved ${elementsWithStyles.length} elements with inline styles from docx-preview`);
       
       // CRITICAL: Fix split merge fields - docx-preview may split {{FieldName}} across <span> elements
       // We need to reconstruct them into single text nodes so Apex can replace them
@@ -676,12 +678,28 @@ app.post("/convert-word-to-html", async (req, res) => {
         }
       }
       
+      // Get the final HTML with ALL inline styles preserved
+      // This is the docx-preview HTML structure with merge fields injected
+      const finalMergedHtml = styledWrapper.innerHTML;
+      
       return {
-        html: mergedHtml,
+        html: finalMergedHtml,
         styles: docxStyles,
         mergeFieldsFound: mergeFieldsCount
       };
     }, mammothHtml, styledHtml, styleData);
+
+    // Extract final HTML one more time to ensure we have the latest version with all styles
+    const finalHtmlWithStyles = await page.evaluate(() => {
+      const wrapper = document.querySelector('.docx-wrapper') || document.querySelector('section.docx') || document.body;
+      return wrapper.innerHTML;
+    });
+
+    // Update mergedHtml.html with the latest version (in case text node replacement updated it)
+    if (finalHtmlWithStyles && finalHtmlWithStyles !== mergedHtml.html) {
+      console.log('Updating merged HTML with latest styled version from browser...');
+      mergedHtml.html = finalHtmlWithStyles;
+    }
 
     // Close browser
     await browser.close();
