@@ -287,6 +287,15 @@ app.post("/convert-word-to-html", async (req, res) => {
       const styledDiv = document.createElement('div');
       styledDiv.innerHTML = styledHtmlContent;
       
+      // Verify mammoth HTML has merge fields
+      const mammothMergeFields = mammothHtmlContent.match(/\{\{[^}]+\}\}/g);
+      if (!mammothMergeFields || mammothMergeFields.length === 0) {
+        console.warn('WARNING: Mammoth HTML does not contain merge fields!');
+        // Still proceed but log warning
+      } else {
+        console.log(`Mammoth HTML contains ${mammothMergeFields.length} merge fields:`, mammothMergeFields.slice(0, 5));
+      }
+      
       // Extract styles from docx-preview
       const docxStyles = styleDataContent.styles || '';
       
@@ -320,143 +329,130 @@ app.post("/convert-word-to-html", async (req, res) => {
       }
       
       // docx-preview didn't preserve merge fields, need to inject them from mammoth
-      console.log('docx-preview HTML missing merge fields, injecting from mammoth...');
+      console.log('docx-preview HTML missing merge fields, injecting from mammoth while preserving styling...');
       
-      // Extract all merge fields from mammoth HTML with their context
-      const mammothMergeFields = [];
-      const mammothTextWalker = document.createTreeWalker(
-        mammothDiv,
-        NodeFilter.SHOW_TEXT,
-        null,
-        false
-      );
-      let mammothTextNode;
-      while (mammothTextNode = mammothTextWalker.nextNode()) {
-        const text = mammothTextNode.textContent;
-        const mergeFieldMatches = text.match(/\{\{[^}]+\}\}/g);
-        if (mergeFieldMatches) {
-          mammothMergeFields.push({
-            text: text,
-            mergeFields: mergeFieldMatches,
-            parentTag: mammothTextNode.parentElement ? mammothTextNode.parentElement.tagName : null
+      // SIMPLIFIED APPROACH: Use mammoth HTML (has merge fields) and copy ALL styles from docx-preview
+      // This ensures merge fields are always present while preserving styling
+      const article = styledWrapper.querySelector('article') || styledWrapper.querySelector('section') || styledWrapper;
+      
+      // Create a temporary container for mammoth HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = mammothHtmlContent;
+      
+      // Get all styled elements from docx-preview (these have perfect styling)
+      const styledElements = Array.from(article.querySelectorAll('*'));
+      const mammothElements = Array.from(tempDiv.querySelectorAll('*'));
+      
+      console.log(`Found ${styledElements.length} styled elements and ${mammothElements.length} mammoth elements`);
+      
+      // Copy styles from docx-preview elements to mammoth elements
+      // Match by element type and position to preserve styling
+      const styleMap = new Map();
+      
+      // First pass: collect styles by element type and position
+      styledElements.forEach((styledEl, index) => {
+        const tag = styledEl.tagName;
+        const key = `${tag}_${index}`;
+        styleMap.set(key, {
+          style: styledEl.style.cssText,
+          className: styledEl.className,
+          attributes: {}
+        });
+        
+        // Copy important style-related attributes
+        Array.from(styledEl.attributes).forEach(attr => {
+          if (['style', 'class', 'align', 'valign', 'width', 'height', 'colspan', 'rowspan'].includes(attr.name)) {
+            styleMap.get(key).attributes[attr.name] = attr.value;
+          }
+        });
+      });
+      
+      // Second pass: apply styles to mammoth elements
+      mammothElements.forEach((mammothEl, index) => {
+        const tag = mammothEl.tagName;
+        const key = `${tag}_${index}`;
+        
+        // Try exact match first
+        if (styleMap.has(key)) {
+          const styleData = styleMap.get(key);
+          if (styleData.style) {
+            mammothEl.style.cssText = styleData.style;
+          }
+          if (styleData.className) {
+            mammothEl.className = styleData.className;
+          }
+          Object.entries(styleData.attributes).forEach(([attrName, attrValue]) => {
+            mammothEl.setAttribute(attrName, attrValue);
           });
-        }
-      }
-      
-      // Now walk through styled HTML and replace text that should contain merge fields
-      // Strategy: Match text content and replace with mammoth text (which has merge fields)
-      const styledTextWalker = document.createTreeWalker(
-        styledWrapper,
-        NodeFilter.SHOW_TEXT,
-        null,
-        false
-      );
-      
-      let styledTextNode;
-      let mammothIndex = 0;
-      while (styledTextNode = styledTextWalker.nextNode()) {
-        if (mammothIndex < mammothMergeFields.length) {
-          const mammothData = mammothMergeFields[mammothIndex];
-          const styledText = styledTextNode.textContent.trim();
-          const mammothText = mammothData.text.trim();
-          
-          // If texts are similar (same words, just merge fields differ), replace
-          // Remove merge fields for comparison
-          const styledTextClean = styledText.replace(/\{\{[^}]+\}\}/g, '').trim();
-          const mammothTextClean = mammothText.replace(/\{\{[^}]+\}\}/g, '').trim();
-          
-          if (styledTextClean === mammothTextClean || 
-              styledTextClean.length > 0 && mammothTextClean.includes(styledTextClean) ||
-              mammothTextClean.length > 0 && styledTextClean.includes(mammothTextClean)) {
-            // Replace text while preserving parent element's inline styles
-            styledTextNode.textContent = mammothData.text;
-            mammothIndex++;
+        } else {
+          // Try to find a matching element by tag type
+          const matchingStyled = styledElements.find(el => el.tagName === tag);
+          if (matchingStyled) {
+            if (matchingStyled.style.cssText) {
+              mammothEl.style.cssText = matchingStyled.style.cssText;
+            }
+            if (matchingStyled.className) {
+              mammothEl.className = matchingStyled.className;
+            }
           }
         }
+      });
+      
+      // Also copy wrapper styles
+      if (article !== styledWrapper) {
+        const articleClone = article.cloneNode(false);
+        if (article.className) articleClone.className = article.className;
+        if (article.style.cssText) articleClone.style.cssText = article.style.cssText;
+        articleClone.innerHTML = tempDiv.innerHTML;
+        
+        // Replace article content
+        article.innerHTML = articleClone.innerHTML;
+      } else {
+        // Replace wrapper content directly
+        styledWrapper.innerHTML = tempDiv.innerHTML;
       }
       
-      // Get merged HTML - preserves all inline styles from docx-preview
+      // Get merged HTML with styles applied
       let mergedHtml = styledWrapper.innerHTML;
       
       // Verify merge fields are present
       const mergeFieldCheck = mergedHtml.match(/\{\{[^}]+\}\}/g);
+      console.log(`After merge: Found ${mergeFieldCheck ? mergeFieldCheck.length : 0} merge fields`);
       
-      // If still no merge fields, use fallback: use docx-preview HTML and inject merge fields via string replacement
       if (!mergeFieldCheck || mergeFieldCheck.length === 0) {
-        console.log('Merge fields still missing, using fallback: string replacement in styled HTML...');
-        
-        // Use docx-preview HTML as base (perfect styling)
-        mergedHtml = styledWrapper.innerHTML;
-        
-        // Extract merge fields from mammoth
-        const mammothMergeFieldPattern = /\{\{([^}]+)\}\}/g;
-        const mammothMergeFieldsMap = new Map();
-        let match;
-        while ((match = mammothMergeFieldPattern.exec(mammothHtmlContent)) !== null) {
-          const fieldName = match[1].trim();
-          const fullMatch = match[0];
-          // Find the text context around this merge field in mammoth
-          const contextStart = Math.max(0, match.index - 20);
-          const contextEnd = Math.min(mammothHtmlContent.length, match.index + fullMatch.length + 20);
-          const context = mammothHtmlContent.substring(contextStart, contextEnd);
-          mammothMergeFieldsMap.set(fieldName, { fullMatch, context });
-        }
-        
-        // Try to find and replace merge fields in styled HTML by matching context
-        mammothMergeFieldsMap.forEach((data, fieldName) => {
-          // Find similar context in styled HTML and inject merge field
-          // This is a simple approach - in production you might want more sophisticated matching
-          const contextWords = data.context.split(/\s+/).filter(w => w.length > 2 && !w.match(/\{\{|\}\}/));
-          if (contextWords.length > 0) {
-            // Try to find this context in styled HTML
-            const styledHtmlLower = mergedHtml.toLowerCase();
-            const contextLower = contextWords.join(' ').toLowerCase();
-            const contextIndex = styledHtmlLower.indexOf(contextLower);
-            if (contextIndex !== -1) {
-              // Found context, try to inject merge field nearby
-              // This is a simplified injection - in practice you'd want more precise matching
-              console.log(`Found context for merge field ${fieldName}, attempting injection...`);
-            }
-          }
-        });
-        
-        // If we still don't have merge fields, append mammoth content with styled wrapper
-        // This preserves styling while ensuring merge fields are present
-        const finalMergeCheck = mergedHtml.match(/\{\{[^}]+\}\}/g);
-        if (!finalMergeCheck || finalMergeCheck.length === 0) {
-          console.log('Using mammoth HTML with docx-preview wrapper structure...');
-          const article = styledWrapper.querySelector('article') || styledWrapper;
-          // Keep the wrapper structure but use mammoth content
-          // This loses some styling but ensures merge fields are present
-          const tempDiv = document.createElement('div');
-          tempDiv.innerHTML = mammothHtmlContent;
-          
-          // Copy styles from styled elements to mammoth elements where possible
-          const styledElements = Array.from(article.querySelectorAll('*'));
-          const mammothElements = Array.from(tempDiv.querySelectorAll('*'));
-          
-          styledElements.forEach((styledEl, index) => {
-            if (index < mammothElements.length && styledEl.tagName === mammothElements[index].tagName) {
-              const mammothEl = mammothElements[index];
-              if (styledEl.style.cssText) {
-                mammothEl.style.cssText = styledEl.style.cssText;
-              }
-              if (styledEl.className) {
-                mammothEl.className = styledEl.className;
-              }
-            }
-          });
-          
-          article.innerHTML = tempDiv.innerHTML;
-          mergedHtml = styledWrapper.innerHTML;
-        }
+        console.error('ERROR: Merge fields still missing after merge attempt!');
+        // Last resort: use mammoth HTML directly with basic styling
+        mergedHtml = mammothHtmlContent;
       }
       
       const finalMergeFieldCheck = mergedHtml.match(/\{\{[^}]+\}\}/g);
+      const mergeFieldsCount = finalMergeFieldCheck ? finalMergeFieldCheck.length : 0;
+      
+      console.log(`Final merge result: ${mergeFieldsCount} merge fields found in merged HTML`);
+      if (mergeFieldsCount > 0) {
+        console.log('Sample merge fields:', finalMergeFieldCheck.slice(0, 5));
+      } else {
+        console.warn('WARNING: No merge fields found in final merged HTML!');
+        // Last resort: return mammoth HTML with docx-preview styles
+        console.log('Using mammoth HTML as fallback with docx-preview wrapper...');
+        const fallbackWrapper = styledWrapper.cloneNode(false);
+        fallbackWrapper.innerHTML = mammothHtmlContent;
+        mergedHtml = fallbackWrapper.innerHTML;
+        const fallbackCheck = mergedHtml.match(/\{\{[^}]+\}\}/g);
+        if (fallbackCheck && fallbackCheck.length > 0) {
+          console.log(`Fallback successful: ${fallbackCheck.length} merge fields found`);
+          return {
+            html: mergedHtml,
+            styles: docxStyles,
+            mergeFieldsFound: fallbackCheck.length
+          };
+        }
+      }
+      
       return {
         html: mergedHtml,
         styles: docxStyles,
-        mergeFieldsFound: finalMergeFieldCheck ? finalMergeFieldCheck.length : 0
+        mergeFieldsFound: mergeFieldsCount
       };
     }, mammothHtml, styledHtml, styleData);
 
@@ -593,7 +589,7 @@ app.post("/convert-word-to-html", async (req, res) => {
       details: error.message 
     });
   }
-});
+  });
 
 app.post("/convert", async (req, res) => {
   try {
