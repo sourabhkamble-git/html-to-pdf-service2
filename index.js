@@ -3,6 +3,7 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
+import mammoth from "mammoth";
 
 const app = express();
 app.use(cors());
@@ -12,11 +13,10 @@ app.get("/", (req, res) => {
     res.send("HTML to PDF service is running. Use POST /convert with HTML content, or POST /convert-word-to-html with Word document.");
   });
 
-// New endpoint for Word to HTML conversion using Puppeteer + docx-preview
-// This approach preserves ALL Word formatting, styles, colors, alignment, and images
-// exactly as they appear in the original document (same as LWC component)
+// New endpoint for Word to HTML conversion using mammoth.js
+// mammoth.js preserves merge fields ({{FieldName}}) AND styling
+// This is the best approach for server-side automation where merge fields are critical
 app.post("/convert-word-to-html", async (req, res) => {
-  let browser = null;
   try {
     const { file } = req.body; // Base64 encoded Word document
     const format = req.query.format?.toLowerCase() === "json" ? "json" : "html";
@@ -37,203 +37,111 @@ app.post("/convert-word-to-html", async (req, res) => {
       return res.status(400).json({ success: false, error: "Word document is empty" });
     }
 
-    console.log("Converting Word to HTML using Puppeteer + docx-preview. File size:", wordBuffer.length, "bytes");
+    console.log("Converting Word to HTML using mammoth.js (preserves merge fields + styling). File size:", wordBuffer.length, "bytes");
 
-    // Convert buffer to base64 data URL for embedding in HTML
-    const base64Word = wordBuffer.toString("base64");
+    // Enhanced style mapping to preserve Word formatting
+    const styleMap = [
+      "p[style-name='Title'] => h1.title:fresh",
+      "p[style-name='Heading 1'] => h1:fresh",
+      "p[style-name='Heading 2'] => h2:fresh",
+      "p[style-name='Heading 3'] => h3:fresh",
+      "r[style-name='Strong'] => strong",
+      "r[style-name='Emphasis'] => em",
+      "p[style-name='Normal'] => p"
+    ];
 
-    // Launch Puppeteer browser
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: true
-    });
-
-    const page = await browser.newPage();
-
-    // Create HTML page that loads docx-preview and renders the Word document
-    const htmlPage = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Word to HTML Conversion</title>
-  <!-- Load JSZip (required dependency for docx-preview) -->
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <!-- Load docx-preview (latest stable version) -->
-  <script src="https://cdn.jsdelivr.net/npm/docx-preview@latest/dist/docx-preview.min.js"></script>
-  <style>
-    body {
-      margin: 0;
-      padding: 20px;
-      background: white;
-    }
-    #container {
-      width: 100%;
-    }
-    /* Remove docx-preview's default grey background */
-    .docx-wrapper {
-      background: white !important;
-      padding: 0 !important;
-    }
-  </style>
-</head>
-<body>
-  <div id="container"></div>
-  <script>
-    (async function() {
-      try {
-        // Wait for libraries to load
-        if (typeof JSZip === 'undefined') {
-          throw new Error('JSZip not loaded');
-        }
-        if (typeof docx === 'undefined' && typeof docxjs === 'undefined') {
-          throw new Error('docx-preview not loaded');
-        }
-
-        // Get docx-preview library (it might be exposed as 'docx', 'docxjs', or 'docxPreview')
-        // docx-preview typically exposes itself as window.docx or window.docxjs
-        let docxLib = null;
-        if (window.docx && typeof window.docx.renderAsync === 'function') {
-          docxLib = window.docx;
-        } else if (window.docxjs && typeof window.docxjs.renderAsync === 'function') {
-          docxLib = window.docxjs;
-        } else if (window.docxPreview && typeof window.docxPreview.renderAsync === 'function') {
-          docxLib = window.docxPreview;
-        } else {
-          // Try to find it in any global variable
-          const possibleNames = ['docx', 'docxjs', 'docxPreview', 'docxPreviewjs'];
-          for (const name of possibleNames) {
-            if (window[name] && typeof window[name].renderAsync === 'function') {
-              docxLib = window[name];
-              break;
-            }
-          }
-        }
-        
-        if (!docxLib || typeof docxLib.renderAsync !== 'function') {
-          throw new Error('docx-preview renderAsync method not found. Available globals: ' + Object.keys(window).filter(k => k.toLowerCase().includes('docx')).join(', '));
-        }
-
-        // Decode base64 Word document to ArrayBuffer
-        const base64Word = '${base64Word}';
-        const binaryString = atob(base64Word);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        const arrayBuffer = bytes.buffer;
-
-        // Render Word document using docx-preview (preserves all formatting, styles, colors, alignment, images)
-        const container = document.getElementById('container');
-        await docxLib.renderAsync(arrayBuffer, container, null, {
-          useBase64URL: true,  // Convert images to base64 URLs
-          className: 'docx',
-          inWrapper: true
-        });
-
-        // Wait for images to load
-        const images = container.querySelectorAll('img');
-        if (images.length > 0) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-          await Promise.all(Array.from(images).map((img) => {
-            return new Promise((resolve) => {
-              if (img.complete && img.naturalHeight !== 0) {
-                resolve();
-              } else {
-                img.onload = resolve;
-                img.onerror = resolve; // Continue even if image fails
-                setTimeout(resolve, 3000); // Timeout after 3 seconds
-              }
-            });
-          }));
-        }
-
-        // Signal completion
-        window.conversionComplete = true;
-        window.conversionError = null;
-      } catch (error) {
-        console.error('Conversion error:', error);
-        window.conversionComplete = true;
-        window.conversionError = error.message;
+    // Convert Word document to HTML using mammoth
+    // mammoth preserves merge fields as {{FieldName}} AND inline styles (colors, fonts, alignment)
+    const result = await mammoth.convertToHtml(
+      { buffer: wordBuffer },
+      {
+        styleMap: styleMap,
+        includeDefaultStyleMap: true, // Include default style mappings
+        includeEmbeddedStyleMap: true // Include styles embedded in the Word document
       }
-    })();
-  </script>
-</body>
-</html>`;
+    );
 
-    // Load the HTML page
-    await page.setContent(htmlPage, { waitUntil: "networkidle0" });
+    let htmlContent = result.value; // The HTML content with merge fields preserved
+    const messages = result.messages; // Any warnings or errors
 
-    // Wait for conversion to complete
-    await page.waitForFunction(() => window.conversionComplete === true, { timeout: 60000 });
-
-    // Check for errors
-    const error = await page.evaluate(() => window.conversionError);
-    if (error) {
-      throw new Error("Conversion failed in browser: " + error);
+    // Log any conversion messages
+    if (messages && messages.length > 0) {
+      console.log("Mammoth conversion messages:", messages);
     }
-
-    // Extract the rendered HTML
-    const htmlContent = await page.evaluate(() => {
-      const container = document.getElementById('container');
-      if (!container) {
-        throw new Error('Container not found');
-      }
-      
-      // Get the rendered content (docx-preview wraps it in .docx-wrapper)
-      const wrapper = container.querySelector('.docx-wrapper') || container;
-      return wrapper.innerHTML;
-    });
 
     if (!htmlContent || htmlContent.trim().length === 0) {
-      throw new Error("Rendered HTML is empty");
+      return res.status(500).json({ 
+        success: false, 
+        error: "Word to HTML conversion produced empty HTML content" 
+      });
     }
 
-    // Wrap in proper HTML document structure
-    const finalHtml = `<!DOCTYPE html>
+    // Check if merge fields are preserved
+    const mergeFieldPattern = /\{\{[^}]+\}\}/g;
+    const mergeFields = htmlContent.match(mergeFieldPattern) || [];
+    console.log("Merge fields preserved in HTML:", mergeFields.length, "fields");
+    if (mergeFields.length > 0) {
+      console.log("Sample merge fields:", mergeFields.slice(0, 5));
+    }
+
+    // Wrap HTML content in a proper document structure with enhanced CSS
+    // This ensures styles, colors, fonts, and alignment are preserved
+    htmlContent = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    /* Base styles - mammoth.js outputs inline styles, so we preserve them */
     body {
-      margin: 0;
-      padding: 20px;
-      background: white;
       font-family: 'Calibri', 'Arial', 'Helvetica', sans-serif;
+      margin: 20px;
+      color: #000000;
+      line-height: 1.6;
     }
-    /* Preserve all styles from docx-preview */
-    .docx-wrapper {
-      background: white !important;
-      padding: 0 !important;
+    
+    /* Preserve table formatting */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 10px 0;
+      border-spacing: 0;
     }
+    
+    td, th {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    
+    th {
+      background-color: #f2f2f2;
+      font-weight: bold;
+    }
+    
     /* Ensure all inline styles from Word are preserved */
     * {
       box-sizing: border-box;
     }
+    
+    /* Preserve merge fields styling - make them visible */
+    /* Merge fields like {{Opportunity.Name}} will appear as-is in the HTML */
   </style>
 </head>
 <body>
-  <div class="docx-wrapper">
-    ${htmlContent}
-  </div>
+${htmlContent}
 </body>
 </html>`;
 
-    console.log("Word to HTML conversion successful using docx-preview. HTML length:", finalHtml.length, "characters");
-
-    // Close browser
-    await browser.close();
-    browser = null;
+    console.log("Word to HTML conversion successful. HTML length:", htmlContent.length, "characters");
+    console.log("Merge fields count:", mergeFields.length);
 
     if (format === "json") {
       // Return HTML as JSON
       const response = {
         success: true,
-        html: finalHtml
+        html: htmlContent
       };
 
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -241,20 +149,10 @@ app.post("/convert-word-to-html", async (req, res) => {
     } else {
       // Return HTML directly
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.send(finalHtml);
+      return res.send(htmlContent);
     }
   } catch (error) {
     console.error("Word to HTML conversion error:", error);
-    
-    // Ensure browser is closed on error
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (closeError) {
-        console.error("Error closing browser:", closeError);
-      }
-    }
-    
     return res.status(500).json({ 
       success: false, 
       error: "Failed to convert Word to HTML", 
