@@ -3,14 +3,84 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
+import mammoth from "mammoth";
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
 
 app.get("/", (req, res) => {
-    res.send("HTML to PDF service is running. Use POST /convert with HTML content.");
+    res.send("HTML to PDF service is running. Use POST /convert with HTML content, or POST /convert-word-to-html with Word document.");
   });
+
+// New endpoint for Word to HTML conversion
+app.post("/convert-word-to-html", async (req, res) => {
+  try {
+    const { file } = req.body; // Base64 encoded Word document
+    const format = req.query.format?.toLowerCase() === "json" ? "json" : "html";
+
+    if (!file) {
+      return res.status(400).json({ success: false, error: "Word document file (base64) is required" });
+    }
+
+    // Decode base64 to buffer
+    let wordBuffer;
+    try {
+      wordBuffer = Buffer.from(file, "base64");
+    } catch (decodeError) {
+      return res.status(400).json({ success: false, error: "Invalid base64 encoding: " + decodeError.message });
+    }
+
+    if (wordBuffer.length === 0) {
+      return res.status(400).json({ success: false, error: "Word document is empty" });
+    }
+
+    console.log("Converting Word to HTML. File size:", wordBuffer.length, "bytes");
+
+    // Convert Word document to HTML using mammoth
+    // mammoth preserves formatting, styles, colors, alignment, images
+    const result = await mammoth.convertToHtml({ buffer: wordBuffer });
+
+    const htmlContent = result.value; // The HTML content
+    const messages = result.messages; // Any warnings or errors
+
+    // Log any conversion messages
+    if (messages && messages.length > 0) {
+      console.log("Mammoth conversion messages:", messages);
+    }
+
+    if (!htmlContent || htmlContent.trim().length === 0) {
+      return res.status(500).json({ 
+        success: false, 
+        error: "Word to HTML conversion produced empty HTML content" 
+      });
+    }
+
+    console.log("Word to HTML conversion successful. HTML length:", htmlContent.length, "characters");
+
+    if (format === "json") {
+      // Return HTML as JSON
+      const response = {
+        success: true,
+        html: htmlContent
+      };
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.json(response);
+    } else {
+      // Return HTML directly
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(htmlContent);
+    }
+  } catch (error) {
+    console.error("Word to HTML conversion error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      error: "Failed to convert Word to HTML", 
+      details: error.message 
+    });
+  }
+});
 
 app.post("/convert", async (req, res) => {
   try {
