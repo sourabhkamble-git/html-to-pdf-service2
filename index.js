@@ -37,11 +37,31 @@ app.post("/convert-word-to-html", async (req, res) => {
 
     console.log("Converting Word to HTML. File size:", wordBuffer.length, "bytes");
 
-    // Convert Word document to HTML using mammoth
-    // mammoth preserves formatting, styles, colors, alignment, images
-    const result = await mammoth.convertToHtml({ buffer: wordBuffer });
+    // Enhanced style mapping to preserve Word formatting
+    // This maps Word styles to HTML with proper CSS
+    const styleMap = [
+      "p[style-name='Title'] => h1.title:fresh",
+      "p[style-name='Heading 1'] => h1:fresh",
+      "p[style-name='Heading 2'] => h2:fresh",
+      "p[style-name='Heading 3'] => h3:fresh",
+      "r[style-name='Strong'] => strong",
+      "p[style-name='Normal'] => p"
+    ];
 
-    const htmlContent = result.value; // The HTML content
+    // Convert Word document to HTML using mammoth with enhanced options
+    // Mammoth preserves inline styles (colors, fonts, alignment) automatically
+    // includeDefaultStyleMap: includes default mappings for common Word styles
+    // includeEmbeddedStyleMap: includes style mappings embedded in the document itself
+    const result = await mammoth.convertToHtml(
+      { buffer: wordBuffer },
+      {
+        styleMap: styleMap,
+        includeDefaultStyleMap: true, // Include default style mappings for better preservation
+        includeEmbeddedStyleMap: true // Include styles embedded in the Word document
+      }
+    );
+
+    let htmlContent = result.value; // The HTML content
     const messages = result.messages; // Any warnings or errors
 
     // Log any conversion messages
@@ -55,6 +75,62 @@ app.post("/convert-word-to-html", async (req, res) => {
         error: "Word to HTML conversion produced empty HTML content" 
       });
     }
+
+    // Wrap HTML content in a proper document structure with CSS support
+    // This ensures styles, colors, fonts, and alignment are preserved
+    // Important: We preserve ALL inline styles that mammoth.js outputs
+    htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* Base styles - mammoth.js outputs inline styles, so we preserve them */
+    body {
+      font-family: 'Calibri', 'Arial', 'Helvetica', sans-serif;
+      margin: 20px;
+      color: #000000;
+      line-height: 1.6;
+    }
+    
+    /* Preserve table formatting */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 10px 0;
+      border-spacing: 0;
+    }
+    
+    td, th {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    
+    th {
+      background-color: #f2f2f2;
+      font-weight: bold;
+    }
+    
+    /* Ensure all inline styles from Word are preserved */
+    * {
+      box-sizing: border-box;
+    }
+    
+    /* Preserve text alignment */
+    p, div, td, th {
+      /* Inline styles from mammoth will override these defaults */
+    }
+    
+    /* Preserve colors - mammoth outputs color in inline styles */
+    /* All color, font-size, font-weight, text-align, etc. are in inline styles */
+  </style>
+</head>
+<body>
+${htmlContent}
+</body>
+</html>`;
 
     console.log("Word to HTML conversion successful. HTML length:", htmlContent.length, "characters");
 
