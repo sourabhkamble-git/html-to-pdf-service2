@@ -546,64 +546,69 @@ app.post("/convert-word-to-html", async (req, res) => {
       }
       
       // Final check before returning - also fix split merge fields at string level
-      // Fix split merge fields like {{</span><span>Field</span><span>}} -> {{Field}}
+      // CRITICAL: Fix split merge fields like {{</span><span>Field</span><span>}} -> {{Field}}
+      // This must happen AFTER we get the HTML from Puppeteer but BEFORE returning
       let fixedHtml = mergedHtml;
       let fixedCount = 0;
       
-      // Comprehensive pattern to match ALL split merge field variations
-      // Pattern: {{</span><span>...field parts...<span>}} or {{<span>...field parts...</span><span>}}
-      // This regex finds merge fields that are split across span elements
-      const splitMergeFieldRegex = /\{\{<\/?span><span>([^<]+)<\/span>(<span>([^<]+)<\/span>)*<span>\}\}/g;
+      console.log('Starting string-level fix for split merge fields...');
       
-      // More specific: {{</span><span>FieldName</span><span>}}
-      let match;
-      while ((match = splitMergeFieldRegex.exec(fixedHtml)) !== null) {
-        const fullMatch = match[0];
-        
-        // Extract all field name parts from spans
-        const spanMatches = fullMatch.match(/<span>([^<]+)<\/span>/g);
+      // AGGRESSIVE FIX: Match the exact pattern we see in logs: {{</span><span>FieldName</span><span>}}
+      // Use a more flexible pattern that captures everything between {{ and }} across spans
+      const splitPattern1 = /\{\{<\/span><span>([^<]+)<\/span><span>\}\}/g;
+      fixedHtml = fixedHtml.replace(splitPattern1, (match, fieldName) => {
+        fixedCount++;
+        const fixed = `{{${fieldName}}}`;
+        console.log(`Fixed pattern 1: "${match}" -> "${fixed}"`);
+        return fixed;
+      });
+      
+      // Pattern 2: {{</span><span>Field</span><span>Part</span><span>}} (multiple spans)
+      const splitPattern2 = /\{\{<\/span>(<span>([^<]+)<\/span>)+<span>\}\}/g;
+      fixedHtml = fixedHtml.replace(splitPattern2, (match) => {
+        // Extract all field parts
+        const spanMatches = match.match(/<span>([^<]+)<\/span>/g);
         if (spanMatches && spanMatches.length > 0) {
           const fieldParts = spanMatches.map(span => span.replace(/<\/?span>/g, ''));
           const fieldName = fieldParts.join('');
-          const fixedField = `{{${fieldName}}}`;
-          
-          fixedHtml = fixedHtml.replace(fullMatch, fixedField);
+          const fixed = `{{${fieldName}}}`;
           fixedCount++;
-          console.log(`Fixed split merge field: "${fullMatch.substring(0, 60)}..." -> "${fixedField}"`);
+          console.log(`Fixed pattern 2: "${match.substring(0, 60)}..." -> "${fixed}"`);
+          return fixed;
         }
-      }
+        return match;
+      });
       
-      // Also handle pattern: {{<span>Field</span><span>Name</span>}} (without closing span before }})
-      const pattern2 = /\{\{<span>([^<]+)<\/span>(<span>([^<]+)<\/span>)*\}\}/g;
-      while ((match = pattern2.exec(fixedHtml)) !== null) {
-        const fullMatch = match[0];
-        const spanMatches = fullMatch.match(/<span>([^<]+)<\/span>/g);
+      // Pattern 3: {{<span>Field</span><span>Name</span>}} (no closing span before }})
+      const splitPattern3 = /\{\{<span>([^<]+)<\/span>(<span>([^<]+)<\/span>)*\}\}/g;
+      fixedHtml = fixedHtml.replace(splitPattern3, (match) => {
+        const spanMatches = match.match(/<span>([^<]+)<\/span>/g);
         if (spanMatches && spanMatches.length > 0) {
           const fieldParts = spanMatches.map(span => span.replace(/<\/?span>/g, ''));
           const fieldName = fieldParts.join('');
-          const fixedField = `{{${fieldName}}}`;
-          
-          fixedHtml = fixedHtml.replace(fullMatch, fixedField);
+          const fixed = `{{${fieldName}}}`;
           fixedCount++;
-          console.log(`Fixed split merge field (pattern 2): "${fullMatch.substring(0, 60)}..." -> "${fixedField}"`);
+          console.log(`Fixed pattern 3: "${match.substring(0, 60)}..." -> "${fixed}"`);
+          return fixed;
         }
-      }
+        return match;
+      });
       
-      // Handle pattern with brackets: {{</span><span>OpportunityLineItems</span><span>[0]</span><span>.Product2.Name</span><span>}}
-      const patternWithBrackets = /\{\{<\/?span>(<span>([^<]+)<\/span>)+<span>\}\}/g;
-      while ((match = patternWithBrackets.exec(fixedHtml)) !== null) {
-        const fullMatch = match[0];
-        const spanMatches = fullMatch.match(/<span>([^<]+)<\/span>/g);
+      // Pattern 4: More complex - handle cases like {{</span><span>OpportunityLineItems</span><span>[0]</span><span>.Product2.Name</span><span>}}
+      // This uses a greedy approach to match everything between {{ and }} that contains spans
+      const splitPattern4 = /\{\{<\/span>((?:<span>[^<]+<\/span>)+)<span>\}\}/g;
+      fixedHtml = fixedHtml.replace(splitPattern4, (match, spansContent) => {
+        const spanMatches = spansContent.match(/<span>([^<]+)<\/span>/g);
         if (spanMatches && spanMatches.length > 0) {
           const fieldParts = spanMatches.map(span => span.replace(/<\/?span>/g, ''));
           const fieldName = fieldParts.join('');
-          const fixedField = `{{${fieldName}}}`;
-          
-          fixedHtml = fixedHtml.replace(fullMatch, fixedField);
+          const fixed = `{{${fieldName}}}`;
           fixedCount++;
-          console.log(`Fixed split merge field (with brackets): "${fullMatch.substring(0, 80)}..." -> "${fixedField}"`);
+          console.log(`Fixed pattern 4: "${match.substring(0, 80)}..." -> "${fixed}"`);
+          return fixed;
         }
-      }
+        return match;
+      });
       
       if (fixedCount > 0) {
         console.log(`✓ Fixed ${fixedCount} split merge fields at string level`);
@@ -614,8 +619,28 @@ app.post("/convert-word-to-html", async (req, res) => {
         const splitAfterFix = mergedHtml.match(/\{\{<\/span><span>/g);
         if (splitAfterFix && splitAfterFix.length > 0) {
           console.warn(`WARNING: Still found ${splitAfterFix.length} split merge fields after string-level fix`);
+          console.log('Sample remaining split fields:', splitAfterFix.slice(0, 3));
         } else {
           console.log(`✓ All split merge fields fixed - found ${afterFixCheck ? afterFixCheck.length : 0} proper merge fields`);
+          if (afterFixCheck && afterFixCheck.length > 0) {
+            console.log('Sample fixed merge fields:', afterFixCheck.slice(0, 5));
+          }
+        }
+      } else {
+        // Check if there are split merge fields that weren't caught
+        const splitCheck = mergedHtml.match(/\{\{<\/span><span>/g);
+        if (splitCheck && splitCheck.length > 0) {
+          console.warn(`WARNING: Found ${splitCheck.length} split merge fields but fix didn't catch them!`);
+          console.log('Sample split pattern:', splitCheck[0]);
+          // Try one more aggressive fix - remove all span tags inside merge fields
+          fixedHtml = mergedHtml.replace(/\{\{([^}]*<span>[^<]+<\/span>[^}]*)\}\}/g, (match, content) => {
+            const cleaned = content.replace(/<\/?span>/g, '');
+            return `{{${cleaned}}}`;
+          });
+          if (fixedHtml !== mergedHtml) {
+            mergedHtml = fixedHtml;
+            console.log('Applied aggressive cleanup - removed all span tags inside merge fields');
+          }
         }
       }
       
@@ -662,9 +687,72 @@ app.post("/convert-word-to-html", async (req, res) => {
     await browser.close();
     browser = null;
 
-    // Verify merge fields are still present
+    // CRITICAL SERVER-SIDE FIX: Fix split merge fields in the HTML we got from Puppeteer
+    // This runs on the Node.js server, not in the browser, so we can do aggressive string replacement
+    console.log("Applying server-side fix for split merge fields...");
+    let serverFixedHtml = mergedHtml.html;
+    let serverFixedCount = 0;
+    
+    // Pattern 1: {{</span><span>FieldName</span><span>}}
+    const serverPattern1 = /\{\{<\/span><span>([^<]+)<\/span><span>\}\}/g;
+    serverFixedHtml = serverFixedHtml.replace(serverPattern1, (match, fieldName) => {
+      serverFixedCount++;
+      return `{{${fieldName}}}`;
+    });
+    
+    // Pattern 2: Multiple spans {{</span><span>Field</span><span>Part</span><span>}}
+    const serverPattern2 = /\{\{<\/span>((?:<span>[^<]+<\/span>)+)<span>\}\}/g;
+    serverFixedHtml = serverFixedHtml.replace(serverPattern2, (match, spansContent) => {
+      const spanMatches = spansContent.match(/<span>([^<]+)<\/span>/g);
+      if (spanMatches && spanMatches.length > 0) {
+        const fieldParts = spanMatches.map(span => span.replace(/<\/?span>/g, ''));
+        const fieldName = fieldParts.join('');
+        serverFixedCount++;
+        return `{{${fieldName}}}`;
+      }
+      return match;
+    });
+    
+    // Pattern 3: {{<span>Field</span><span>Name</span>}} (no closing span)
+    const serverPattern3 = /\{\{<span>([^<]+)<\/span>(<span>([^<]+)<\/span>)*\}\}/g;
+    serverFixedHtml = serverFixedHtml.replace(serverPattern3, (match) => {
+      const spanMatches = match.match(/<span>([^<]+)<\/span>/g);
+      if (spanMatches && spanMatches.length > 0) {
+        const fieldParts = spanMatches.map(span => span.replace(/<\/?span>/g, ''));
+        const fieldName = fieldParts.join('');
+        serverFixedCount++;
+        return `{{${fieldName}}}`;
+      }
+      return match;
+    });
+    
+    // Pattern 4: Aggressive - remove ALL span tags inside any {{...}} that contains spans
+    const serverPattern4 = /\{\{([^}]*<span>[^<]+<\/span>[^}]*)\}\}/g;
+    serverFixedHtml = serverFixedHtml.replace(serverPattern4, (match, content) => {
+      const cleaned = content.replace(/<\/?span>/g, '');
+      serverFixedCount++;
+      return `{{${cleaned}}}`;
+    });
+    
+    if (serverFixedCount > 0) {
+      console.log(`✓ Server-side fix: Fixed ${serverFixedCount} split merge fields`);
+      mergedHtml.html = serverFixedHtml;
+    }
+    
+    // Verify merge fields are still present and properly formatted
     const finalMergeFields = mergedHtml.html.match(/\{\{[^}]+\}\}/g) || [];
+    const splitMergeFields = mergedHtml.html.match(/\{\{<\/span><span>/g) || [];
+    
     console.log("Merge fields in merged HTML:", finalMergeFields.length, "fields");
+    if (splitMergeFields.length > 0) {
+      console.warn(`WARNING: Still found ${splitMergeFields.length} split merge fields after server-side fix!`);
+      console.log("Sample split pattern:", splitMergeFields[0]);
+    } else {
+      console.log("✓ All merge fields are properly formatted (no split patterns found)");
+      if (finalMergeFields.length > 0) {
+        console.log("Sample merge fields:", finalMergeFields.slice(0, 5));
+      }
+    }
     
     // CRITICAL: If merge fields are missing, use mammoth HTML directly with docx-preview wrapper
     if (finalMergeFields.length === 0 && mergeFields.length > 0) {
