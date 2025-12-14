@@ -352,74 +352,132 @@ app.post("/convert-word-to-html", async (req, res) => {
       const mammothContainer = document.createElement('div');
       mammothContainer.innerHTML = mammothHtmlContent;
       
-      // Extract all text nodes from mammoth HTML (these contain merge fields)
-      const mammothTextNodes = [];
-      const mammothWalker = document.createTreeWalker(
-        mammothContainer,
-        NodeFilter.SHOW_TEXT,
-        null,
-        false
-      );
-      let mammothNode;
-      while (mammothNode = mammothWalker.nextNode()) {
-        const text = mammothNode.textContent;
-        if (text && text.trim()) {
-          mammothTextNodes.push(text);
-        }
-      }
+      // SMART MATCHING: Extract text segments with context to match semantically
+      // This ensures merge fields go into the correct styled elements
       
-      console.log(`Extracted ${mammothTextNodes.length} text nodes from mammoth HTML (with merge fields)`);
-      
-      // Extract all text nodes from docx-preview HTML (perfect styling, but no merge fields)
-      const styledTextNodes = [];
-      const styledTextNodesMap = new Map(); // Map to store node -> parent element for style preservation
-      const styledWalker = document.createTreeWalker(
-        article,
-        NodeFilter.SHOW_TEXT,
-        null,
-        false
-      );
-      let styledNode;
-      while (styledNode = styledWalker.nextNode()) {
-        const text = styledNode.textContent;
-        if (text && text.trim()) {
-          styledTextNodes.push({
-            node: styledNode,
-            parent: styledNode.parentElement,
-            originalText: text
+      // Extract text segments from mammoth HTML (with merge fields)
+      const mammothSegments = [];
+      const mammothElements = mammothContainer.querySelectorAll('p, td, th, li, h1, h2, h3, h4, h5, h6, span, div');
+      mammothElements.forEach((el) => {
+        const text = el.textContent.trim();
+        if (text) {
+          mammothSegments.push({
+            text: text,
+            tag: el.tagName.toLowerCase(),
+            hasMergeField: /\{\{/.test(text)
           });
-        }
-      }
-      
-      console.log(`Found ${styledTextNodes.length} text nodes in docx-preview HTML (with perfect styling)`);
-      
-      // Replace text content in docx-preview HTML with text from mammoth HTML
-      // This preserves ALL inline styles, colors, fonts from docx-preview
-      let mammothIndex = 0;
-      styledTextNodes.forEach(({ node, parent }) => {
-        if (mammothIndex < mammothTextNodes.length && parent) {
-          // Replace text content - parent element's inline styles are preserved automatically
-          node.textContent = mammothTextNodes[mammothIndex];
-          mammothIndex++;
         }
       });
       
-      // If there are remaining mammoth text nodes, append them with similar styling
-      if (mammothIndex < mammothTextNodes.length) {
-        console.log(`Appending ${mammothTextNodes.length - mammothIndex} additional text nodes from mammoth...`);
-        
-        // Get styles from last paragraph to maintain consistency
-        const lastP = Array.from(article.querySelectorAll('p')).pop();
-        const baseStyle = lastP ? lastP.style.cssText : '';
-        const baseClass = lastP ? lastP.className : '';
-        
-        for (let i = mammothIndex; i < mammothTextNodes.length; i++) {
-          const p = document.createElement('p');
-          if (baseStyle) p.style.cssText = baseStyle;
-          if (baseClass) p.className = baseClass;
-          p.textContent = mammothTextNodes[i];
-          article.appendChild(p);
+      console.log(`Extracted ${mammothSegments.length} text segments from mammoth HTML (${mammothSegments.filter(s => s.hasMergeField).length} with merge fields)`);
+      
+      // Extract text segments from docx-preview HTML (perfect styling, no merge fields)
+      const styledSegments = [];
+      const styledElements = article.querySelectorAll('p, td, th, li, h1, h2, h3, h4, h5, h6, span, div');
+      styledElements.forEach((el) => {
+        const text = el.textContent.trim();
+        if (text) {
+          styledSegments.push({
+            element: el,
+            text: text,
+            tag: el.tagName.toLowerCase(),
+            style: el.style.cssText,
+            className: el.className
+          });
         }
+      });
+      
+      console.log(`Found ${styledSegments.length} text segments in docx-preview HTML (with perfect styling)`);
+      
+      // Smart matching: Match segments by tag and text similarity (excluding merge fields)
+      // This ensures merge fields go into the correct styled elements
+      const matchedPairs = [];
+      
+      mammothSegments.forEach((mammothSeg, mammothIndex) => {
+        // Find the best matching styled segment
+        let bestMatch = null;
+        let bestScore = 0;
+        
+        styledSegments.forEach((styledSeg, styledIndex) => {
+          // Skip if already matched
+          if (matchedPairs.some(p => p.styledIndex === styledIndex)) {
+            return;
+          }
+          
+          // Match by tag first
+          if (mammothSeg.tag !== styledSeg.tag) {
+            return;
+          }
+          
+          // Calculate similarity score based on non-merge-field text
+          const mammothText = mammothSeg.text.replace(/\{\{[^}]+\}\}/g, '').trim();
+          const styledText = styledSeg.text.trim();
+          
+          // Exact match gets highest score
+          if (mammothText === styledText) {
+            bestMatch = styledIndex;
+            bestScore = 100;
+            return;
+          }
+          
+          // Partial match (e.g., "Account Name" matches "Account Name-")
+          if (mammothText.includes(styledText) || styledText.includes(mammothText)) {
+            const score = Math.min(mammothText.length, styledText.length) / Math.max(mammothText.length, styledText.length) * 50;
+            if (score > bestScore) {
+              bestMatch = styledIndex;
+              bestScore = score;
+            }
+          }
+        });
+        
+        // If we found a match, pair them
+        if (bestMatch !== null) {
+          matchedPairs.push({
+            mammothIndex: mammothIndex,
+            styledIndex: bestMatch,
+            score: bestScore
+          });
+        }
+      });
+      
+      console.log(`Matched ${matchedPairs.length} text segments semantically`);
+      
+      // Replace text in matched styled elements with mammoth text (which has merge fields)
+      matchedPairs.forEach(({ mammothIndex, styledIndex }) => {
+        const mammothSeg = mammothSegments[mammothIndex];
+        const styledSeg = styledSegments[styledIndex];
+        
+        // Get the text node(s) in the styled element
+        const textNodes = [];
+        const walker = document.createTreeWalker(
+          styledSeg.element,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        );
+        let node;
+        while (node = walker.nextNode()) {
+          textNodes.push(node);
+        }
+        
+        // Replace text content - this preserves all inline styles from the parent element
+        if (textNodes.length > 0) {
+          // Replace first text node with mammoth text (has merge fields)
+          textNodes[0].textContent = mammothSeg.text;
+          // Clear other text nodes (they're now part of the first node)
+          for (let i = 1; i < textNodes.length; i++) {
+            textNodes[i].textContent = '';
+          }
+        } else {
+          // No text nodes, create one
+          styledSeg.element.textContent = mammothSeg.text;
+        }
+      });
+      
+      // Handle unmatched segments (should be rare)
+      const unmatchedMammoth = mammothSegments.filter((_, i) => !matchedPairs.some(p => p.mammothIndex === i));
+      if (unmatchedMammoth.length > 0) {
+        console.log(`Warning: ${unmatchedMammoth.length} mammoth segments couldn't be matched`);
       }
       
       // The article now has docx-preview's perfect styling with mammoth's merge fields
