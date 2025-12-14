@@ -451,12 +451,13 @@ app.post("/convert-word-to-html", async (req, res) => {
         console.log(`✓ SUCCESS: ${mergeFieldCheck.length} merge fields preserved with docx-preview styling`);
       }
       
-      const finalMergeFieldCheck = mergedHtml.match(/\{\{[^}]+\}\}/g);
-      const mergeFieldsCount = finalMergeFieldCheck ? finalMergeFieldCheck.length : 0;
+      // Final check before returning
+      const finalCheck = mergedHtml.match(/\{\{[^}]+\}\}/g) || [];
+      const mergeFieldsCount = finalCheck.length;
       
       console.log(`Final merge result: ${mergeFieldsCount} merge fields found in merged HTML`);
       if (mergeFieldsCount > 0) {
-        console.log('Sample merge fields:', finalMergeFieldCheck.slice(0, 5));
+        console.log('✓ Sample merge fields:', finalCheck.slice(0, 5));
       } else {
         console.warn('WARNING: No merge fields found in final merged HTML!');
         // Last resort: return mammoth HTML with docx-preview styles
@@ -464,26 +465,23 @@ app.post("/convert-word-to-html", async (req, res) => {
         const fallbackWrapper = styledWrapper.cloneNode(false);
         fallbackWrapper.innerHTML = mammothHtmlContent;
         mergedHtml = fallbackWrapper.innerHTML;
-        const fallbackCheck = mergedHtml.match(/\{\{[^}]+\}\}/g);
-        if (fallbackCheck && fallbackCheck.length > 0) {
-          console.log(`Fallback successful: ${fallbackCheck.length} merge fields found`);
+        const fallbackCheck = mergedHtml.match(/\{\{[^}]+\}\}/g) || [];
+        if (fallbackCheck.length > 0) {
+          console.log(`✓ Fallback successful: ${fallbackCheck.length} merge fields found`);
           return {
             html: mergedHtml,
             styles: docxStyles,
             mergeFieldsFound: fallbackCheck.length
           };
+        } else {
+          console.error('ERROR: Even fallback has no merge fields!');
+          // Return mammoth HTML anyway
+          return {
+            html: mammothHtmlContent,
+            styles: docxStyles,
+            mergeFieldsFound: 0
+          };
         }
-      }
-      
-      // Final check before returning
-      const finalCheck = mergedHtml.match(/\{\{[^}]+\}\}/g) || [];
-      const mergeFieldsCount = finalCheck.length;
-      
-      console.log(`Returning merged HTML with ${mergeFieldsCount} merge fields`);
-      if (mergeFieldsCount > 0) {
-        console.log('Sample merge fields in return:', finalCheck.slice(0, 3));
-      } else {
-        console.error('WARNING: Returning HTML with NO merge fields!');
       }
       
       return {
