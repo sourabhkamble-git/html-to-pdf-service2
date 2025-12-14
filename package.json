@@ -11,6 +11,7 @@
         "body-parser": "^2.2.1",
         "cors": "^2.8.5",
         "express": "^4.22.1",
-        "puppeteer-core": "^24.32.0"
+        "puppeteer-core": "^24.32.0",
+        "mammoth": "^1.6.0"
     }
 }
