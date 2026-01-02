@@ -1111,7 +1111,50 @@ app.post("/convert", async (req, res) => {
       }
     });
 
-    const pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
+    // CRITICAL: Ensure page breaks are preserved in PDF
+    // Add page break CSS if not already present
+    await page.evaluate(() => {
+      // Check if page break CSS already exists
+      const existingStyle = document.querySelector('style[data-page-breaks]');
+      if (!existingStyle) {
+        const style = document.createElement('style');
+        style.setAttribute('data-page-breaks', 'true');
+        style.textContent = `
+          @media print {
+            .page-break,
+            [style*="page-break-before: always"],
+            [style*="break-before: page"] {
+              page-break-before: always !important;
+              break-before: page !important;
+            }
+            [style*="page-break-after: always"],
+            [style*="break-after: page"] {
+              page-break-after: always !important;
+              break-after: page !important;
+            }
+            /* Ensure page breaks work in PDF */
+            * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    });
+
+    const pdfBuffer = await page.pdf({ 
+      format: "A4", 
+      printBackground: true,
+      preferCSSPageSize: false,
+      displayHeaderFooter: false,
+      margin: {
+        top: '0.5in',
+        right: '0.5in',
+        bottom: '0.5in',
+        left: '0.5in'
+      }
+    });
     await browser.close();
 
     if (format === "json") {
