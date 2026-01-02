@@ -229,6 +229,41 @@ app.post("/convert-word-to-html", async (req, res) => {
           className: 'docx',
           inWrapper: true
         });
+        
+        // CRITICAL: Detect and mark page breaks from Word document
+        // docx-preview renders page breaks as <section> elements or specific divs
+        const wrapper = container.querySelector('.docx-wrapper') || container;
+        
+        // Method 1: Detect <section> elements (docx-preview often uses these for pages)
+        const sections = wrapper.querySelectorAll('section');
+        console.log('Found ' + sections.length + ' section element(s) - these may represent page breaks');
+        
+        if (sections.length > 1) {
+          // Multiple sections = multiple pages
+          sections.forEach((section, index) => {
+            if (index > 0) {
+              // Add page break before each section after the first
+              section.classList.add('page-break');
+              section.style.pageBreakBefore = 'always';
+              section.setAttribute('data-page-break', 'true');
+              console.log('Marked section ' + (index + 1) + ' as page break');
+            }
+          });
+        }
+        
+        // Method 2: Look for elements with page break indicators
+        const pageBreakElements = wrapper.querySelectorAll(
+          '[style*="page-break"], [style*="break-before"], [style*="break-after"], [data-page-break]'
+        );
+        console.log('Found ' + pageBreakElements.length + ' element(s) with page break indicators');
+        
+        pageBreakElements.forEach(el => {
+          el.classList.add('page-break');
+          el.setAttribute('data-page-break', 'true');
+          if (!el.style.pageBreakBefore) {
+            el.style.pageBreakBefore = 'always';
+          }
+        });
 
         // Wait for images to load
         const images = container.querySelectorAll('img');
@@ -248,6 +283,7 @@ app.post("/convert-word-to-html", async (req, res) => {
         }
 
         // Extract styled HTML and styles from docx-preview
+        // (wrapper was already defined above for page break detection)
         const wrapper = container.querySelector('.docx-wrapper') || container;
         
         // CRITICAL: Ensure all text nodes preserve Unicode characters properly
@@ -1171,7 +1207,39 @@ app.post("/convert", async (req, res) => {
     });
 
     // CRITICAL: Ensure page breaks are preserved in PDF
-    // Add page break CSS if not already present
+    // First, detect and mark page breaks in the DOM
+    await page.evaluate(() => {
+      // Look for <section> elements (docx-preview uses these for pages)
+      const sections = document.querySelectorAll('section');
+      console.log('Found ' + sections.length + ' section element(s) in PDF generation');
+      
+      if (sections.length > 1) {
+        // Multiple sections = multiple pages in Word document
+        sections.forEach((section, index) => {
+          if (index > 0) {
+            // Add page break before each section after the first
+            section.classList.add('page-break');
+            section.setAttribute('data-page-break', 'true');
+            section.style.pageBreakBefore = 'always';
+            console.log('Marked section ' + (index + 1) + ' as page break in PDF');
+          }
+        });
+      }
+      
+      // Also mark any existing page break elements
+      const pageBreakElements = document.querySelectorAll(
+        '[data-page-break="true"], .page-break, [style*="page-break"]'
+      );
+      pageBreakElements.forEach(el => {
+        el.classList.add('page-break');
+        el.setAttribute('data-page-break', 'true');
+        if (!el.style.pageBreakBefore) {
+          el.style.pageBreakBefore = 'always';
+        }
+      });
+    });
+    
+    // Add comprehensive page break CSS
     await page.evaluate(() => {
       // Check if page break CSS already exists
       const existingStyle = document.querySelector('style[data-page-breaks]');
@@ -1179,18 +1247,45 @@ app.post("/convert", async (req, res) => {
         const style = document.createElement('style');
         style.setAttribute('data-page-breaks', 'true');
         style.textContent = `
+          /* CRITICAL: Page break CSS for PDF generation */
           @media print {
+            /* Force page breaks before elements marked with page-break class */
             .page-break,
+            section.page-break,
+            [data-page-break="true"],
             [style*="page-break-before: always"],
             [style*="break-before: page"] {
               page-break-before: always !important;
               break-before: page !important;
+              margin-top: 0 !important;
+              padding-top: 0 !important;
             }
+            
+            /* Force page breaks after elements */
             [style*="page-break-after: always"],
             [style*="break-after: page"] {
               page-break-after: always !important;
               break-after: page !important;
             }
+            
+            /* CRITICAL: Multiple sections = multiple pages */
+            section + section {
+              page-break-before: always !important;
+              break-before: page !important;
+            }
+            
+            /* Prevent page breaks inside important elements */
+            table, thead, tbody, tr {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
+            
+            /* Ensure proper page margins */
+            @page {
+              margin: 0.5in;
+              size: letter;
+            }
+            
             /* Ensure page breaks work in PDF */
             * {
               -webkit-print-color-adjust: exact !important;
@@ -1201,6 +1296,9 @@ app.post("/convert", async (req, res) => {
         document.head.appendChild(style);
       }
     });
+    
+    // CRITICAL: Emulate print media to ensure page break CSS is applied
+    await page.emulateMediaType('print');
 
     const pdfBuffer = await page.pdf({ 
       format: "A4", 
