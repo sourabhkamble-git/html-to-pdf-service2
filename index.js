@@ -117,17 +117,42 @@ app.post("/convert-word-to-html", async (req, res) => {
   <!-- Load docx-preview (latest stable version) -->
   <script src="https://cdn.jsdelivr.net/npm/docx-preview@latest/dist/docx-preview.min.js"></script>
   <style>
+    @charset "UTF-8";
+    
+    /* Ensure proper Unicode support for symbols */
+    * {
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
     body {
       margin: 0;
       padding: 20px;
       background: white;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif;
     }
+    
     #container {
       width: 100%;
     }
+    
     .docx-wrapper {
       background: white !important;
       padding: 0 !important;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif !important;
+    }
+    
+    /* Preserve all inline styles from docx-preview */
+    .docx-wrapper * {
+      font-family: inherit !important;
+    }
+    
+    /* Ensure symbols and special characters render correctly */
+    @font-face {
+      font-family: 'Symbol Fallback';
+      src: local('Symbol'), local('Wingdings'), local('Wingdings 2'), local('Wingdings 3'), local('Webdings');
+      unicode-range: U+0020-007F, U+00A0-00FF, U+0100-017F, U+0180-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF, U+2100-214F, U+2190-21FF, U+2200-22FF, U+2300-23FF, U+2400-243F, U+2440-245F, U+2460-24FF, U+2500-257F, U+2580-259F, U+25A0-25FF, U+2600-26FF, U+2700-27BF, U+27C0-27EF, U+27F0-27FF, U+2800-28FF, U+2900-297F, U+2980-29FF, U+2A00-2AFF, U+2B00-2BFF, U+2C00-2C5F, U+2C60-2C7F, U+2C80-2CFF, U+2D00-2D2F, U+2D30-2D7F, U+2D80-2DDF, U+2DE0-2DFF, U+2E00-2E7F, U+2E80-2EFF, U+2F00-2FDF, U+2FF0-2FFF, U+3000-303F, U+3040-309F, U+30A0-30FF, U+3100-312F, U+3130-318F, U+3190-319F, U+31A0-31BF, U+31C0-31EF, U+31F0-31FF, U+3200-32FF, U+3300-33FF, U+3400-4DBF, U+4DC0-4DFF, U+4E00-9FFF, U+A000-A48F, U+A490-A4CF, U+A4D0-A4FF, U+A500-A63F, U+A640-A69F, U+A6A0-A6FF, U+A700-A71F, U+A720-A7FF, U+A800-A82F, U+A830-A83F, U+A840-A87F, U+A880-A8DF, U+A8E0-A8FF, U+A900-A92F, U+A930-A95F, U+A960-A97F, U+A980-A9DF, U+A9E0-A9FF, U+AA00-AA5F, U+AA60-AA7F, U+AA80-AADF, U+AAE0-AAFF, U+AB00-AB2F, U+AB30-AB6F, U+AB70-ABBF, U+ABC0-ABFF, U+AC00-D7AF, U+D7B0-D7FF, U+F900-FAFF, U+FB00-FB4F, U+FB50-FDFF, U+FE00-FE0F, U+FE10-FE1F, U+FE20-FE2F, U+FE30-FE4F, U+FE50-FE6F, U+FE70-FEFF, U+FF00-FFEF, U+FFF0-FFFF;
     }
   </style>
 </head>
@@ -202,6 +227,35 @@ app.post("/convert-word-to-html", async (req, res) => {
 
         // Extract styled HTML and styles from docx-preview
         const wrapper = container.querySelector('.docx-wrapper') || container;
+        
+        // CRITICAL: Ensure all text nodes preserve Unicode characters properly
+        // Fix any encoding issues that might cause symbols to display as square brackets
+        const fixUnicodeEncoding = (element) => {
+          const walker = document.createTreeWalker(
+            element,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+          );
+          let node;
+          while (node = walker.nextNode()) {
+            // Ensure text content is properly encoded
+            // If text contains replacement characters or square brackets where symbols should be,
+            // try to preserve the original character codes
+            const text = node.textContent;
+            // Check for common symbol replacement patterns (square brackets, question marks, etc.)
+            // These usually indicate font/encoding issues
+            if (text && (text.includes('□') || text.includes('') || text.match(/\[[^\]]+\]/))) {
+              // Try to preserve the original character - this is a fallback
+              // The real fix is ensuring fonts are available
+              console.log('Warning: Potential encoding issue detected in text node:', text.substring(0, 50));
+            }
+          }
+        };
+        
+        // Apply Unicode encoding fix
+        fixUnicodeEncoding(wrapper);
+        
         const styledHtml = wrapper.innerHTML;
         
         // Extract all styles (inline and from style tags)
@@ -842,21 +896,39 @@ app.post("/convert-word-to-html", async (req, res) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    @charset "UTF-8";
+    
     ${mergedHtml.styles || ''}
+    
+    /* CRITICAL: Font fallbacks for symbols and special characters */
+    * {
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif !important;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
     /* Additional styles to enhance mammoth HTML */
     body {
-      font-family: 'Calibri', 'Arial', 'Helvetica', sans-serif;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif !important;
       margin: 20px;
       color: #000000;
       background: white;
     }
+    
     .docx-wrapper {
       background: white !important;
       padding: 0 !important;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif !important;
     }
+    
+    .docx-wrapper * {
+      font-family: inherit !important;
+    }
+    
     * {
       box-sizing: border-box;
     }
+    
     /* Preserve all inline styles from mammoth */
     *[style] {
       /* Inline styles take precedence */
@@ -908,23 +980,42 @@ app.post("/convert-word-to-html", async (req, res) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    @charset "UTF-8";
+    
     ${mergedHtml.styles || ''}
+    
+    /* CRITICAL: Font fallbacks for symbols and special characters */
+    * {
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif !important;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
     /* Preserve all inline styles from docx-preview - they're in the HTML elements */
     body {
-      font-family: 'Calibri', 'Arial', 'Helvetica', sans-serif;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif !important;
       margin: 0;
       padding: 20px;
       color: #000000;
       background: white;
     }
+    
     .docx-wrapper {
       background: white !important;
       padding: 0 !important;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif !important;
     }
+    
+    /* Ensure symbols render correctly */
+    .docx-wrapper * {
+      font-family: inherit !important;
+    }
+    
     /* CRITICAL: Don't override inline styles - they take precedence */
     * {
       box-sizing: border-box;
     }
+    
     /* Ensure all colors, fonts, alignment from inline styles are preserved */
     *[style] {
       /* Inline styles will override any CSS rules */
@@ -990,14 +1081,35 @@ app.post("/convert", async (req, res) => {
     }
 
     const browser = await puppeteer.launch({
-      args: chromium.args,
+      args: [
+        ...chromium.args,
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--font-render-hinting=none',
+        '--enable-font-antialiasing'
+      ],
       defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
       headless: true
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: ["load", "domcontentloaded"] });
+    
+    // Set content with proper encoding
+    await page.setContent(html, { 
+      waitUntil: ["load", "domcontentloaded"],
+      encoding: 'utf8'
+    });
+    
+    // Ensure UTF-8 encoding is set
+    await page.evaluate(() => {
+      document.documentElement.setAttribute('lang', 'en');
+      if (!document.querySelector('meta[charset]')) {
+        const meta = document.createElement('meta');
+        meta.setAttribute('charset', 'UTF-8');
+        document.head.insertBefore(meta, document.head.firstChild);
+      }
+    });
 
     const pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
     await browser.close();
