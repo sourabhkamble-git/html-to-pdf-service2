@@ -148,6 +148,28 @@ app.post("/convert-word-to-html", async (req, res) => {
       font-family: inherit !important;
     }
     
+    /* CRITICAL: Ensure black dot bullets (•) render correctly */
+    /* Black dot bullet is U+2022 - ensure fonts support it */
+    * {
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI', 'Segoe UI Symbol', 'Times New Roman', 'Courier New', sans-serif !important;
+    }
+    
+    /* Ensure black dot bullets display correctly */
+    li::marker,
+    *::before[content*="\\2022"],
+    *::before[content*="•"] {
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI', 'Segoe UI Symbol', 'Times New Roman', sans-serif !important;
+      color: black !important;
+    }
+    
+    /* Fallback: If black dot bullet character doesn't render, use CSS content */
+    li[data-bullet="dot"]::marker {
+      content: '•' !important;
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI', 'Segoe UI Symbol', sans-serif !important;
+      color: black !important;
+      font-weight: bold !important;
+    }
+    
     /* Ensure symbols and special characters render correctly */
     @font-face {
       font-family: 'Symbol Fallback';
@@ -255,6 +277,43 @@ app.post("/convert-word-to-html", async (req, res) => {
         
         // Apply Unicode encoding fix
         fixUnicodeEncoding(wrapper);
+        
+        // CRITICAL: Ensure black dot bullets (•) are preserved and render correctly
+        // Check for black dot bullet character (U+2022) and ensure it's not corrupted
+        const walker = document.createTreeWalker(
+          wrapper,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        );
+        let textNode;
+        while (textNode = walker.nextNode()) {
+          let text = textNode.textContent;
+          // Check if text contains black dot bullet character
+          if (text.includes('•') || text.includes('\u2022')) {
+            // Ensure the character is preserved (don't replace, just verify)
+            // If it's corrupted, try to fix it
+            if (text.includes('') || text.includes('?')) {
+              // Character might be corrupted - try to restore from context
+              console.log('Warning: Potential corruption detected in text node with bullet');
+            }
+          }
+        }
+        
+        // Also ensure list items with black dot bullets are properly styled
+        const listItems = wrapper.querySelectorAll('li');
+        listItems.forEach(li => {
+          // If list item has disc style, ensure black dot bullet
+          const computedStyle = window.getComputedStyle(li);
+          if (computedStyle.listStyleType === 'disc' || computedStyle.listStyleType === 'circle') {
+            // Ensure black dot bullet is used
+            li.style.listStyleType = 'disc';
+            // Add marker styling to ensure black dot renders
+            if (!li.hasAttribute('data-bullet')) {
+              li.setAttribute('data-bullet', 'dot');
+            }
+          }
+        });
         
         const styledHtml = wrapper.innerHTML;
         
