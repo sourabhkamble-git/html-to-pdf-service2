@@ -116,14 +116,52 @@ app.post("/convert-word-to-html", async (req, res) => {
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <!-- Load docx-preview (latest stable version) -->
   <script src="https://cdn.jsdelivr.net/npm/docx-preview@latest/dist/docx-preview.min.js"></script>
+  <!-- Load docx-preview CSS for proper bullet and list formatting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docx-preview@0.4.1/dist/docx-preview.css">
   <style>
     @charset "UTF-8";
     
-    /* Ensure proper Unicode support for symbols */
+    /* Ensure proper Unicode support for symbols and bullets */
     * {
       font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', 'Symbol', 'Wingdings', 'Wingdings 2', 'Wingdings 3', 'Webdings', 'MS Gothic', 'MS Mincho', sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+    }
+    
+    /* CRITICAL: Specific font support for bullet points */
+    /* Black dot bullet (•) - U+2022 - needs fonts that support this character */
+    /* Times New Roman, Arial, and Calibri all support the black dot bullet */
+    li::before,
+    li::marker,
+    [style*="list-style"]::before,
+    *[data-bullet="true"]::before,
+    .docx-wrapper li::before,
+    .docx-wrapper li::marker {
+      font-family: 'Times New Roman', 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif !important;
+    }
+    
+    /* Ensure list items use proper fonts for bullets */
+    ul, ol, li {
+      font-family: 'Calibri', 'Arial', 'Helvetica', 'Times New Roman', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif;
+    }
+    
+    /* Force bullet characters (• U+2022, ○ U+25CB, etc.) to use fonts that support them */
+    .docx-wrapper li::marker,
+    .docx-wrapper li::before,
+    .docx-wrapper ul li::marker,
+    .docx-wrapper ol li::marker {
+      font-family: 'Times New Roman', 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif !important;
+    }
+    
+    /* Ensure text content with bullet characters uses proper fonts */
+    .docx-wrapper * {
+      /* Preserve inline styles but ensure font fallback for bullet characters */
+      font-family: inherit;
+    }
+    
+    /* Specific fix for black dot bullet character (•) */
+    .docx-wrapper *:contains('•') {
+      font-family: 'Times New Roman', 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif !important;
     }
     
     body {
@@ -146,28 +184,6 @@ app.post("/convert-word-to-html", async (req, res) => {
     /* Preserve all inline styles from docx-preview */
     .docx-wrapper * {
       font-family: inherit !important;
-    }
-    
-    /* CRITICAL: Ensure black dot bullets (•) render correctly */
-    /* Black dot bullet is U+2022 - ensure fonts support it */
-    * {
-      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI', 'Segoe UI Symbol', 'Times New Roman', 'Courier New', sans-serif !important;
-    }
-    
-    /* Ensure black dot bullets display correctly */
-    li::marker,
-    *::before[content*="\\2022"],
-    *::before[content*="•"] {
-      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI', 'Segoe UI Symbol', 'Times New Roman', sans-serif !important;
-      color: black !important;
-    }
-    
-    /* Fallback: If black dot bullet character doesn't render, use CSS content */
-    li[data-bullet="dot"]::marker {
-      content: '•' !important;
-      font-family: 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI', 'Segoe UI Symbol', sans-serif !important;
-      color: black !important;
-      font-weight: bold !important;
     }
     
     /* Ensure symbols and special characters render correctly */
@@ -229,41 +245,6 @@ app.post("/convert-word-to-html", async (req, res) => {
           className: 'docx',
           inWrapper: true
         });
-        
-        // CRITICAL: Detect and mark page breaks from Word document
-        // docx-preview renders page breaks as <section> elements or specific divs
-        const wrapper = container.querySelector('.docx-wrapper') || container;
-        
-        // Method 1: Detect <section> elements (docx-preview often uses these for pages)
-        const sections = wrapper.querySelectorAll('section');
-        console.log('Found ' + sections.length + ' section element(s) - these may represent page breaks');
-        
-        if (sections.length > 1) {
-          // Multiple sections = multiple pages
-          sections.forEach((section, index) => {
-            if (index > 0) {
-              // Add page break before each section after the first
-              section.classList.add('page-break');
-              section.style.pageBreakBefore = 'always';
-              section.setAttribute('data-page-break', 'true');
-              console.log('Marked section ' + (index + 1) + ' as page break');
-            }
-          });
-        }
-        
-        // Method 2: Look for elements with page break indicators
-        const pageBreakElements = wrapper.querySelectorAll(
-          '[style*="page-break"], [style*="break-before"], [style*="break-after"], [data-page-break]'
-        );
-        console.log('Found ' + pageBreakElements.length + ' element(s) with page break indicators');
-        
-        pageBreakElements.forEach(el => {
-          el.classList.add('page-break');
-          el.setAttribute('data-page-break', 'true');
-          if (!el.style.pageBreakBefore) {
-            el.style.pageBreakBefore = 'always';
-          }
-        });
 
         // Wait for images to load
         const images = container.querySelectorAll('img');
@@ -283,7 +264,6 @@ app.post("/convert-word-to-html", async (req, res) => {
         }
 
         // Extract styled HTML and styles from docx-preview
-        // (wrapper was already defined above for page break detection)
         const wrapper = container.querySelector('.docx-wrapper') || container;
         
         // CRITICAL: Ensure all text nodes preserve Unicode characters properly
@@ -313,43 +293,6 @@ app.post("/convert-word-to-html", async (req, res) => {
         
         // Apply Unicode encoding fix
         fixUnicodeEncoding(wrapper);
-        
-        // CRITICAL: Ensure black dot bullets (•) are preserved and render correctly
-        // Check for black dot bullet character (U+2022) and ensure it's not corrupted
-        const walker = document.createTreeWalker(
-          wrapper,
-          NodeFilter.SHOW_TEXT,
-          null,
-          false
-        );
-        let textNode;
-        while (textNode = walker.nextNode()) {
-          let text = textNode.textContent;
-          // Check if text contains black dot bullet character
-          if (text.includes('•') || text.includes('\u2022')) {
-            // Ensure the character is preserved (don't replace, just verify)
-            // If it's corrupted, try to fix it
-            if (text.includes('') || text.includes('?')) {
-              // Character might be corrupted - try to restore from context
-              console.log('Warning: Potential corruption detected in text node with bullet');
-            }
-          }
-        }
-        
-        // Also ensure list items with black dot bullets are properly styled
-        const listItems = wrapper.querySelectorAll('li');
-        listItems.forEach(li => {
-          // If list item has disc style, ensure black dot bullet
-          const computedStyle = window.getComputedStyle(li);
-          if (computedStyle.listStyleType === 'disc' || computedStyle.listStyleType === 'circle') {
-            // Ensure black dot bullet is used
-            li.style.listStyleType = 'disc';
-            // Add marker styling to ensure black dot renders
-            if (!li.hasAttribute('data-bullet')) {
-              li.setAttribute('data-bullet', 'dot');
-            }
-          }
-        });
         
         const styledHtml = wrapper.innerHTML;
         
@@ -1196,7 +1139,7 @@ app.post("/convert", async (req, res) => {
       encoding: 'utf8'
     });
     
-    // Ensure UTF-8 encoding is set
+    // Ensure UTF-8 encoding is set and add docx-preview CSS for bullet support
     await page.evaluate(() => {
       document.documentElement.setAttribute('lang', 'en');
       if (!document.querySelector('meta[charset]')) {
@@ -1204,42 +1147,36 @@ app.post("/convert", async (req, res) => {
         meta.setAttribute('charset', 'UTF-8');
         document.head.insertBefore(meta, document.head.firstChild);
       }
+      
+      // Load docx-preview CSS if not already present (for bullet support)
+      if (!document.querySelector('link[href*="docx-preview.css"]')) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://cdn.jsdelivr.net/npm/docx-preview@0.4.1/dist/docx-preview.css';
+        document.head.appendChild(link);
+      }
+      
+      // Add specific font support for black dot bullets (• U+2022)
+      const bulletStyle = document.createElement('style');
+      bulletStyle.textContent = `
+        /* CRITICAL: Font support for black dot bullet (•) - U+2022 */
+        li::before,
+        li::marker,
+        .docx-wrapper li::before,
+        .docx-wrapper li::marker,
+        ul li::marker,
+        ol li::marker {
+          font-family: 'Times New Roman', 'Calibri', 'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif !important;
+        }
+        ul, ol, li {
+          font-family: 'Calibri', 'Arial', 'Helvetica', 'Times New Roman', 'DejaVu Sans', 'Liberation Sans', 'Segoe UI Symbol', sans-serif;
+        }
+      `;
+      document.head.appendChild(bulletStyle);
     });
 
     // CRITICAL: Ensure page breaks are preserved in PDF
-    // First, detect and mark page breaks in the DOM
-    await page.evaluate(() => {
-      // Look for <section> elements (docx-preview uses these for pages)
-      const sections = document.querySelectorAll('section');
-      console.log('Found ' + sections.length + ' section element(s) in PDF generation');
-      
-      if (sections.length > 1) {
-        // Multiple sections = multiple pages in Word document
-        sections.forEach((section, index) => {
-          if (index > 0) {
-            // Add page break before each section after the first
-            section.classList.add('page-break');
-            section.setAttribute('data-page-break', 'true');
-            section.style.pageBreakBefore = 'always';
-            console.log('Marked section ' + (index + 1) + ' as page break in PDF');
-          }
-        });
-      }
-      
-      // Also mark any existing page break elements
-      const pageBreakElements = document.querySelectorAll(
-        '[data-page-break="true"], .page-break, [style*="page-break"]'
-      );
-      pageBreakElements.forEach(el => {
-        el.classList.add('page-break');
-        el.setAttribute('data-page-break', 'true');
-        if (!el.style.pageBreakBefore) {
-          el.style.pageBreakBefore = 'always';
-        }
-      });
-    });
-    
-    // Add comprehensive page break CSS
+    // Add page break CSS if not already present
     await page.evaluate(() => {
       // Check if page break CSS already exists
       const existingStyle = document.querySelector('style[data-page-breaks]');
@@ -1247,45 +1184,18 @@ app.post("/convert", async (req, res) => {
         const style = document.createElement('style');
         style.setAttribute('data-page-breaks', 'true');
         style.textContent = `
-          /* CRITICAL: Page break CSS for PDF generation */
           @media print {
-            /* Force page breaks before elements marked with page-break class */
             .page-break,
-            section.page-break,
-            [data-page-break="true"],
             [style*="page-break-before: always"],
             [style*="break-before: page"] {
               page-break-before: always !important;
               break-before: page !important;
-              margin-top: 0 !important;
-              padding-top: 0 !important;
             }
-            
-            /* Force page breaks after elements */
             [style*="page-break-after: always"],
             [style*="break-after: page"] {
               page-break-after: always !important;
               break-after: page !important;
             }
-            
-            /* CRITICAL: Multiple sections = multiple pages */
-            section + section {
-              page-break-before: always !important;
-              break-before: page !important;
-            }
-            
-            /* Prevent page breaks inside important elements */
-            table, thead, tbody, tr {
-              page-break-inside: avoid !important;
-              break-inside: avoid !important;
-            }
-            
-            /* Ensure proper page margins */
-            @page {
-              margin: 0.5in;
-              size: letter;
-            }
-            
             /* Ensure page breaks work in PDF */
             * {
               -webkit-print-color-adjust: exact !important;
@@ -1296,9 +1206,6 @@ app.post("/convert", async (req, res) => {
         document.head.appendChild(style);
       }
     });
-    
-    // CRITICAL: Emulate print media to ensure page break CSS is applied
-    await page.emulateMediaType('print');
 
     const pdfBuffer = await page.pdf({ 
       format: "A4", 
